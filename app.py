@@ -78,6 +78,9 @@ def render_answer(entry: dict) -> None:
                 page = source.get("page")
                 if page is not None:
                     location += f" · página {page}"
+                chunk_index = source.get("chunk_index")
+                if chunk_index is not None:
+                    location += f" · fragmento {int(chunk_index) + 1}"
                 st.markdown(f"**{index}. {location}**")
                 st.caption(f"Similitud: {source.get('similarity', 0):.3f}")
                 st.write(source.get("text", ""))
@@ -160,7 +163,7 @@ with st.sidebar:
     elif st.session_state.rag_store is not None:
         st.warning("Cambió la lista de documentos. Pulsa «Crear índice de esta sesión» para incluir los archivos nuevos antes de preguntar.")
     else:
-        st.info("Carga tus PDF de TOGAF y crea el índice para empezar.")
+        st.info("Carga tus documentos de TOGAF y crea el índice para empezar.")
 
     st.divider()
     top_k = st.slider(
@@ -225,6 +228,7 @@ if question:
                 {
                     "source": str(item.metadata.get("source", "Documento")),
                     "page": item.metadata.get("page"),
+                    "chunk_index": item.metadata.get("chunk_index"),
                     "similarity": item.similarity,
                     "text": item.text,
                 }

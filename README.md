@@ -35,7 +35,7 @@ documentos durante su propia sesión.
 ```mermaid
 flowchart LR
     A[PDF / DOCX / TXT / HTML] --> B[Extracción local]
-    B --> C[Fragmentos por página\n900 caracteres + 120 de solapamiento]
+    B --> C[Fragmentos por página\n450 caracteres + 80 de solapamiento]
     C --> D[FastEmbed\nmodelo multilingüe local]
     D --> E[Chroma\níndice vectorial]
     F[Pregunta + consultas equivalentes separadas] --> G[Embedding local]
@@ -54,8 +54,8 @@ flowchart LR
 | Componente | Decisión | Motivo |
 | --- | --- | --- |
 | Extracción | `pypdf` en modo de diseño + `fontTools`, `python-docx` y BeautifulSoup | El modo de diseño de pypdf conserva mejor los límites entre palabras en estos PDF; `fontTools` permite interpretar fuentes CFF Type1 que aparecen en ellos. |
-| Chunking | 900 caracteres, solapamiento de 120; no cruza páginas de PDF | Conserva pasajes cortos y su referencia de página; el solapamiento reduce cortes en límites de fragmento. |
-| Embeddings | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` mediante FastEmbed/ONNX | Modelo multilingüe local para preguntas en español y documentos mayormente en inglés; no requiere llamadas de embeddings a una API. |
+| Chunking | 450 caracteres, solapamiento de 80; respeta límites de párrafo, oración y palabra, y no cruza páginas de PDF | El modelo de embeddings admite 128 tokens por entrada; fragmentos más cortos reducen el riesgo de que se trunque su contenido al vectorizarlo. El solapamiento conserva contexto en los cortes y cada cita mantiene su página. |
+| Embeddings | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` mediante FastEmbed/ONNX | Modelo multilingüe local para preguntas en español y documentos mayormente en inglés; no requiere llamadas de embeddings a una API. El nombre del modelo y los parámetros de fragmentación quedan guardados en los metadatos de la colección. |
 | Índice | Chroma con distancia coseno | Persiste localmente en `data/chroma/`; la app usa una colección temporal por sesión. |
 | Recuperación | búsqueda vectorial y léxica BM25, consultas cortas español-inglés, umbral inicial 0.55 y `top_k=5` | Mantiene cada equivalencia separada para no diluir la consulta; BM25 ayuda con nombres y siglas exactas. Busca candidatos antes de limitar los fragmentos que se envían al modelo. |
 | Generación | GroqCloud con `openai/gpt-oss-20b` por defecto | Mantiene el System Prompt, Few-Shot, delimitadores y formato JSON del Avance 1; usa Structured Outputs, esfuerzo de razonamiento bajo y un límite de 2048 tokens de salida para dejar espacio al JSON en respuestas extensas. |
@@ -65,7 +65,7 @@ no produce etiquetas en la extracción de texto. `documents.py` agrega una trans
 manual de sus rótulos con los mismos metadatos de documento y página para que la secuencia
 y la Gestión de Requisitos sean recuperables y citables.
 
-Los parámetros 900/120 y el umbral 0.55 son la configuración inicial documentada. La
+Los parámetros 450/80 y el umbral 0.55 son la configuración inicial documentada. La
 evaluación compara `top_k=3` (línea base) con `top_k=8` (candidata), manteniendo iguales
 los demás parámetros. La candidata solo debe llamarse “mejora” si los resultados Ragas
 lo respaldan.
@@ -152,6 +152,10 @@ La evaluación ejecuta ambos valores de `top_k` y calcula **faithfulness**,
 resumen de control de abstenciones para los casos ausentes del corpus.
 El tutor y Ragas usan la misma `GROQ_API_KEY`; la evaluación se conecta al endpoint
 compatible con OpenAI de Groq para evitar incompatibilidades del adaptador de Ragas.
+El script guarda cada respuesta y cada fila de métricas en checkpoints locales dentro
+de `evaluation/results/`. Si Groq interrumpe la ejecución por cuota, vuelve a correr el
+mismo comando para reanudar; si cambias el corpus, las preguntas, el modelo o los
+parámetros, elige una carpeta `--output` nueva.
 
 ```powershell
 python -m scripts.evaluate_ragas

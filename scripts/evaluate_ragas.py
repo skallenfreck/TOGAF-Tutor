@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
+import importlib.metadata
 import importlib.util
 import json
 import os
@@ -11,7 +13,13 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from src.rag.documents import chunk_documents, load_directory
+from src.rag.documents import (
+    DEFAULT_CHUNK_OVERLAP,
+    DEFAULT_CHUNK_SIZE,
+    SUPPORTED_SUFFIXES,
+    chunk_documents,
+    load_directory,
+)
 from src.rag.embeddings import DEFAULT_EMBEDDING_MODEL, get_local_embedder
 from src.rag.generation import DEFAULT_GROQ_MODEL
 from src.rag.pipeline import RAGPipeline
@@ -24,6 +32,7 @@ METRIC_COLUMNS = [
     "context_precision",
     "context_recall",
 ]
+CHECKPOINT_VERSION = 1
 
 
 def _patch_optional_vertexai_import() -> None:
@@ -75,6 +84,99 @@ def _looks_like_abstention(text: str) -> bool:
     return any(marker in lowered for marker in markers)
 
 
+def _run_signature(
+    documents_dir: Path,
+    questions: list[dict],
+    *,
+    model: str,
+    embedding_model: str,
+    threshold: float,
+    baseline_top_k: int,
+    candidate_top_k: int,
+) -> str:
+    files = []
+    for path in sorted(
+        candidate
+        for candidate in documents_dir.rglob("*")
+        if candidate.is_file() and candidate.suffix.lower() in SUPPORTED_SUFFIXES
+    ):
+        files.append(
+            {
+                "path": path.relative_to(documents_dir).as_posix(),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+        )
+    try:
+        ragas_version = importlib.metadata.version("ragas")
+    except Exception:
+        ragas_version = "unknown"
+    payload = {
+        "checkpoint_version": CHECKPOINT_VERSION,
+        "model": model,
+        "ragas_version": ragas_version,
+        "embedding_model": embedding_model,
+        "threshold": threshold,
+        "chunk_size": DEFAULT_CHUNK_SIZE,
+        "overlap": DEFAULT_CHUNK_OVERLAP,
+        "baseline_top_k": baseline_top_k,
+        "candidate_top_k": candidate_top_k,
+        "metrics": METRIC_COLUMNS,
+        "documents": files,
+        "questions": questions,
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _prepare_checkpoint(output_dir: Path, signature: str) -> tuple[Path, Path]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    metadata_path = output_dir / "checkpoint_metadata.json"
+    answers_path = output_dir / "answers_checkpoint.jsonl"
+    scores_path = output_dir / "metrics_checkpoint.jsonl"
+    if metadata_path.exists():
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if metadata.get("signature") != signature:
+            raise SystemExit(
+                "Los checkpoints existentes pertenecen a otra configuración o corpus. "
+                "Usa una carpeta --output nueva para iniciar otra evaluación."
+            )
+    else:
+        if answers_path.exists() or scores_path.exists():
+            raise SystemExit(
+                "Hay checkpoints sin metadatos de configuración. Usa una carpeta "
+                "--output nueva para evitar mezclar resultados."
+            )
+        temporary_path = metadata_path.with_suffix(".tmp")
+        temporary_path.write_text(
+            json.dumps({"signature": signature}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        temporary_path.replace(metadata_path)
+    return answers_path, scores_path
+
+
+def _load_checkpoint(path: Path) -> dict[tuple[str, str], dict]:
+    records: dict[tuple[str, str], dict] = {}
+    if not path.exists():
+        return records
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            record = json.loads(line)
+            key = (str(record["variant"]), str(record["question_id"]))
+        except (json.JSONDecodeError, KeyError, TypeError):
+            # An interrupted final write should not invalidate earlier rows.
+            continue
+        records[key] = record
+    return records
+
+
+def _append_checkpoint(path: Path, record: dict) -> None:
+    with path.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
 class FastEmbedRagasEmbedding(BaseRagasEmbedding):
     """Adapter so Ragas reuses FastEmbed and performs metric embeddings locally."""
 
@@ -117,15 +219,37 @@ def main() -> None:
         )
 
     questions = _load_dataset(Path(args.dataset), args.limit)
-    source_documents = load_directory(args.documents)
-    chunks = chunk_documents(source_documents, chunk_size=900, overlap=120)
+    documents_dir = Path(args.documents).resolve()
+    source_documents = load_directory(documents_dir)
+    chunks = chunk_documents(
+        source_documents,
+        chunk_size=DEFAULT_CHUNK_SIZE,
+        overlap=DEFAULT_CHUNK_OVERLAP,
+    )
     embedding_model_name = os.getenv("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
+    threshold = float(os.getenv("MIN_RETRIEVAL_SIMILARITY", "0.55"))
+    output_dir = Path(args.output)
+    signature = _run_signature(
+        documents_dir,
+        questions,
+        model=args.model,
+        embedding_model=embedding_model_name,
+        threshold=threshold,
+        baseline_top_k=args.baseline_top_k,
+        candidate_top_k=args.candidate_top_k,
+    )
+    answers_checkpoint, metrics_checkpoint = _prepare_checkpoint(output_dir, signature)
     embedder = get_local_embedder(embedding_model_name)
     store = ChromaVectorStore(
         path=ROOT / "data" / "chroma" / "evaluation",
         collection_name="togaf_evaluation",
     )
-    store.replace_index(chunks, embedder)
+    store.replace_index(
+        chunks,
+        embedder,
+        chunk_size=DEFAULT_CHUNK_SIZE,
+        overlap=DEFAULT_CHUNK_OVERLAP,
+    )
 
     from groq import Groq
     from openai import OpenAI
@@ -155,13 +279,21 @@ def main() -> None:
         ContextRecall(llm=evaluator_llm),
     ]
 
-    threshold = float(os.getenv("MIN_RETRIEVAL_SIMILARITY", "0.55"))
     variants = [
         (f"baseline_top_k_{args.baseline_top_k}", args.baseline_top_k),
         (f"candidate_top_k_{args.candidate_top_k}", args.candidate_top_k),
     ]
     ragas_rows: list[dict[str, object]] = []
     metadata_rows: list[dict[str, object]] = []
+    answer_cache = _load_checkpoint(answers_checkpoint)
+    expected_answers = len(variants) * len(questions)
+    if answer_cache:
+        print(
+            f"Reanudando: {len(answer_cache)} respuestas ya están guardadas en "
+            f"{answers_checkpoint}.",
+            flush=True,
+        )
+    completed_answers = 0
     for variant, top_k in variants:
         pipeline = RAGPipeline(
             store,
@@ -170,48 +302,121 @@ def main() -> None:
             model_name=args.model,
         )
         for question in questions:
-            answer, retrieved = pipeline.answer(
-                question["question"],
-                top_k=top_k,
-                client=client,
-            )
-            ragas_rows.append(
-                {
+            key = (variant, str(question["id"]))
+            record = answer_cache.get(key)
+            if record is None:
+                try:
+                    answer, retrieved = pipeline.answer(
+                        question["question"],
+                        top_k=top_k,
+                        client=client,
+                    )
+                except Exception:
+                    print(
+                        f"\nLa generación se interrumpió en {variant}, pregunta "
+                        f"{question['id']}. Las respuestas ya completadas quedaron "
+                        f"guardadas; vuelve a ejecutar el mismo comando para reanudar "
+                        f"desde {answers_checkpoint}.",
+                        flush=True,
+                    )
+                    raise
+                record = {
+                    "variant": variant,
+                    "question_id": str(question["id"]),
+                    "expects_abstention": bool(question["expects_abstention"]),
+                    "did_abstain": _looks_like_abstention(answer.respuesta),
+                    "retrieved_count": len(retrieved),
                     "user_input": question["question"],
                     "response": _answer_text(answer),
                     "reference": question["reference"],
                     "retrieved_contexts": [item.text for item in retrieved],
                 }
-            )
+                _append_checkpoint(answers_checkpoint, record)
+                answer_cache[key] = record
+            ragas_rows.append(record)
             metadata_rows.append(
                 {
-                    "variant": variant,
-                    "question_id": question["id"],
-                    "expects_abstention": bool(question["expects_abstention"]),
-                    "did_abstain": _looks_like_abstention(answer.respuesta),
-                    "retrieved_count": len(retrieved),
+                    field: record[field]
+                    for field in (
+                        "variant",
+                        "question_id",
+                        "expects_abstention",
+                        "did_abstain",
+                        "retrieved_count",
+                    )
                 }
             )
-        print(f"Respuestas preparadas: {variant} ({len(questions)} preguntas)")
-
-    evaluation_dataset = EvaluationDataset.from_list(ragas_rows)
-    result = evaluate(
-        dataset=evaluation_dataset,
-        metrics=metrics,
-        llm=evaluator_llm,
-        embeddings=evaluator_embeddings,
-        raise_exceptions=True,
-        show_progress=True,
-        batch_size=1,
-    )
+            completed_answers += 1
+            if completed_answers == len(questions) or completed_answers == expected_answers:
+                print(
+                    f"Respuestas preparadas: {variant} "
+                    f"({completed_answers}/{expected_answers} en esta ejecución)",
+                    flush=True,
+                )
 
     import pandas as pd
 
-    scores = result.to_pandas()
-    for key, values in metadata_rows[0].items():
-        scores.insert(0, key, [row[key] for row in metadata_rows])
-    output_dir = Path(args.output)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    metrics_cache = _load_checkpoint(metrics_checkpoint)
+    scored_rows = []
+    if metrics_cache:
+        print(
+            f"Reanudando: {len(metrics_cache)} filas de métricas ya están guardadas "
+            f"en {metrics_checkpoint}.",
+            flush=True,
+        )
+    for index, (row, metadata) in enumerate(zip(ragas_rows, metadata_rows), start=1):
+        key = (str(metadata["variant"]), str(metadata["question_id"]))
+        metric_record = metrics_cache.get(key)
+        if metric_record is None:
+            evaluation_dataset = EvaluationDataset.from_list(
+                [
+                    {
+                        column: row[column]
+                        for column in (
+                            "user_input",
+                            "response",
+                            "reference",
+                            "retrieved_contexts",
+                        )
+                    }
+                ]
+            )
+            try:
+                result = evaluate(
+                    dataset=evaluation_dataset,
+                    metrics=metrics,
+                    llm=evaluator_llm,
+                    embeddings=evaluator_embeddings,
+                    raise_exceptions=True,
+                    show_progress=False,
+                    batch_size=1,
+                )
+            except Exception:
+                print(
+                    f"\nEl cálculo de métricas se interrumpió en {key[0]}, "
+                    f"pregunta {key[1]}. Las filas terminadas quedaron guardadas; "
+                    f"vuelve a ejecutar el mismo comando para reanudar desde "
+                    f"{metrics_checkpoint}.",
+                    flush=True,
+                )
+                raise
+            score_row = json.loads(
+                result.to_pandas().to_json(orient="records", force_ascii=False)
+            )[0]
+            metric_record = {
+                "variant": key[0],
+                "question_id": key[1],
+                "scores": {column: score_row.get(column) for column in METRIC_COLUMNS},
+            }
+            _append_checkpoint(metrics_checkpoint, metric_record)
+            metrics_cache[key] = metric_record
+        scored_rows.append({**row, **metadata, **metric_record["scores"]})
+        print(
+            f"Métricas guardadas: {key[0]} {key[1]} ({index}/{len(ragas_rows)})",
+            flush=True,
+        )
+
+    scores = pd.DataFrame(scored_rows)
     scores.to_csv(output_dir / "scores_by_question.csv", index=False, encoding="utf-8-sig")
 
     available_metrics = [column for column in METRIC_COLUMNS if column in scores.columns]
@@ -239,8 +444,8 @@ def main() -> None:
             {
                 "model": args.model,
                 "embedding_model": embedding_model_name,
-                "chunk_size_characters": 900,
-                "overlap_characters": 120,
+                "chunk_size_characters": DEFAULT_CHUNK_SIZE,
+                "overlap_characters": DEFAULT_CHUNK_OVERLAP,
                 "min_similarity": threshold,
                 "baseline_top_k": args.baseline_top_k,
                 "candidate_top_k": args.candidate_top_k,

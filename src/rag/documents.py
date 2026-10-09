@@ -8,20 +8,19 @@ from io import BytesIO
 from pathlib import Path
 
 SUPPORTED_SUFFIXES = {".pdf", ".docx", ".txt", ".html", ".htm"}
+DEFAULT_CHUNK_SIZE = 450
+DEFAULT_CHUNK_OVERLAP = 80
 
 # pypdf does not extract labels from this vector diagram. Keep a page-attributed
 # transcription so retrieval can answer questions about the ADM cycle order.
 PDF_FIGURE_TRANSCRIPTIONS = {
     ("TOGAF_V9.1-Introduccion.pdf", 4): (
-        "Figure 5-1 Architecture Development Cycle. The diagram shows the Preliminary "
-        "Phase before the ADM cycle. The lettered cycle proceeds through Phase A: "
-        "Architecture Vision; Phase B: Business Architecture; Phase C: Information "
-        "Systems Architectures; Phase D: Technology Architecture; Phase E: Opportunities "
-        "and Solutions; Phase F: Migration Planning; Phase G: Implementation Governance; "
-        "and Phase H: Architecture Change Management. Requirements Management is shown "
-        "at the center of the cycle with connections to the phases; it is not a lettered "
-        "phase. The supplied Phase C extracts cover Data Architecture and Application "
-        "Architecture."
+        "Figure 5-1 Architecture Development Cycle: the Preliminary Phase comes before "
+        "the ADM cycle. The lettered sequence is Phase A Architecture Vision; B Business "
+        "Architecture; C Information Systems Architectures; D Technology Architecture; "
+        "E Opportunities and Solutions; F Migration Planning; G Implementation Governance; "
+        "and H Architecture Change Management. Requirements Management is the continuous "
+        "activity at the center, not a lettered phase."
     ),
 }
 
@@ -102,6 +101,12 @@ def extract_documents(data: bytes, filename: str) -> list[SourceDocument]:
         documents = [SourceDocument(text=text, source=Path(filename).name)] if text else []
 
     if not documents:
+        if suffix == ".pdf":
+            raise ValueError(
+                f"No se pudo extraer texto de {Path(filename).name}. Comprueba que el PDF "
+                "no esté protegido y que tenga texto seleccionable; los PDF escaneados "
+                "requieren OCR."
+            )
         raise ValueError(f"No se pudo extraer texto de {Path(filename).name}.")
     return documents
 
@@ -146,7 +151,9 @@ def _chunk_end(text: str, start: int, target: int) -> int:
 
 
 def chunk_documents(
-    documents: list[SourceDocument], chunk_size: int = 900, overlap: int = 120
+    documents: list[SourceDocument],
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    overlap: int = DEFAULT_CHUNK_OVERLAP,
 ) -> list[DocumentChunk]:
     """Split each source page separately with a small character overlap."""
     if chunk_size < 100:
@@ -166,6 +173,8 @@ def chunk_documents(
                 metadata: dict[str, str | int] = {
                     "source": Path(document.source).name,
                     "chunk_index": local_index,
+                    "start_char": start,
+                    "end_char": end,
                 }
                 if document.page is not None:
                     metadata["page"] = document.page

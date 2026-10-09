@@ -6,7 +6,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from src.rag.documents import chunk_documents, load_directory
+from src.rag.documents import (
+    DEFAULT_CHUNK_OVERLAP,
+    DEFAULT_CHUNK_SIZE,
+    chunk_documents,
+    load_directory,
+)
 from src.rag.embeddings import DEFAULT_EMBEDDING_MODEL, get_local_embedder
 from src.rag.generation import DEFAULT_GROQ_MODEL
 from src.rag.pipeline import RAGPipeline
@@ -30,13 +35,29 @@ def _client_from_environment():
 
 def _ensure_index() -> ChromaVectorStore:
     store = ChromaVectorStore(path=INDEX_DIR)
-    if store.count() > 0:
+    model_name = os.getenv("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
+    metadata = store.collection.metadata or {}
+    if (
+        store.count() > 0
+        and metadata.get("embedding_model") == model_name
+        and metadata.get("chunk_size") == DEFAULT_CHUNK_SIZE
+        and metadata.get("chunk_overlap") == DEFAULT_CHUNK_OVERLAP
+    ):
         return store
 
     documents = load_directory(SOURCE_DIR)
-    chunks = chunk_documents(documents)
-    embedder = get_local_embedder(os.getenv("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL))
-    store.replace_index(chunks, embedder)
+    chunks = chunk_documents(
+        documents,
+        chunk_size=DEFAULT_CHUNK_SIZE,
+        overlap=DEFAULT_CHUNK_OVERLAP,
+    )
+    embedder = get_local_embedder(model_name)
+    store.replace_index(
+        chunks,
+        embedder,
+        chunk_size=DEFAULT_CHUNK_SIZE,
+        overlap=DEFAULT_CHUNK_OVERLAP,
+    )
     print(f"Índice creado con {len(chunks)} fragmentos de {len(documents)} páginas/documentos.")
     return store
 
