@@ -92,6 +92,9 @@ QUERY_EXPANSIONS = (
 FOLLOW_UP_MARKERS = (
     "y eso", "y esa", "y ese", "lo anterior", "amplia eso", "profundiza", "continua",
     "dame mas detalle", "explica eso", "que significa eso", "como se relaciona",
+    "esa respuesta", "la respuesta anterior", "respuesta anterior", "de lo anterior",
+    "que documento respalda", "documento respalda", "entregable debe aprobarse",
+    "ese entregable", "ese resultado",
 )
 
 _STOP_WORDS = {
@@ -151,7 +154,16 @@ def build_retrieval_queries(
             for item in (history or [])
             if item.get("role") == "user" and str(item.get("content", "")).strip()
         ][-2:]
-        queries.extend(f"{previous} {current}" for previous in previous_questions)
+        previous_answers = [
+            str(item.get("content", "")).strip()
+            for item in (history or [])
+            if item.get("role") == "assistant" and str(item.get("content", "")).strip()
+        ][-1:]
+        answer_context = previous_answers[-1][:700] if previous_answers else ""
+        queries.extend(
+            f"{previous} {answer_context} {current}".strip()
+            for previous in previous_questions
+        )
 
     if _asks_for_adm_phase_list(current):
         queries.extend(QUERY_EXPANSIONS[0][1])
