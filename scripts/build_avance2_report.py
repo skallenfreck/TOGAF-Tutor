@@ -30,9 +30,10 @@ APP_URL = "https://togaf-tutor-gvt5yxbedckatvnvha3xei.streamlit.app/"
 REPO_URL = "https://github.com/skallenfreck/TOGAF-Tutor"
 CAPTURE_DIR = Path(r"C:\Users\fresn\AppData\Local\Temp")
 CAPTURES = [
-    (CAPTURE_DIR / "codex-clipboard-0df32d5c-c05a-41ed-b170-728bbae85e24.png", "Consulta sobre la fase A y respuesta generada en la app pública."),
-    (CAPTURE_DIR / "codex-clipboard-c923b47b-0cff-446b-b3c0-0c84b75fff9b.png", "Evidencia recuperada: fragmento, documento, página y similitud."),
+    (CAPTURE_DIR / "codex-clipboard-36b577a8-ff23-4cb4-b212-b8642f00d9eb.png", "Consulta sobre la fase A y respuesta generada en la app pública."),
+    (CAPTURE_DIR / "codex-clipboard-ecf555ce-e335-4fdc-ac43-d8d2e8e3a2fb.png", "Evidencia recuperada: fragmento, documento, página y similitud."),
     (CAPTURE_DIR / "codex-clipboard-7d437ea7-7714-427d-b5ce-875c071779b0.png", "Consulta sobre ADM y respuesta con varias fuentes."),
+    (CAPTURE_DIR / "codex-clipboard-f8825b13-673f-4a53-9255-406e75861507.png", "Vista móvil antes de crear el índice: la app pide cargar documentos antes de aceptar consultas."),
 ]
 
 NAVY = colors.HexColor("#132238")
