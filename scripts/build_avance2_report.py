@@ -173,9 +173,14 @@ def build() -> Path:
     h2 = ParagraphStyle("H2ES", parent=styles["Heading2"], fontName="TimesNewRoman-Bold", fontSize=12, leading=15, textColor=BLUE, spaceBefore=7, spaceAfter=5)
     title = ParagraphStyle("TitleES", parent=styles["Title"], fontName="TimesNewRoman-Bold", fontSize=28, leading=32, textColor=NAVY, alignment=TA_CENTER, spaceAfter=12)
     subtitle = ParagraphStyle("SubES", parent=body, fontSize=13, leading=18, alignment=TA_CENTER, textColor=MUTED)
-    doc = SimpleDocTemplate(str(OUT), pagesize=A4, rightMargin=1.7*cm, leftMargin=1.7*cm, topMargin=1.6*cm, bottomMargin=1.5*cm, title="Informe Avance 2 - Tutor TOGAF", author="Equipo Tutor TOGAF")
+    doc = SimpleDocTemplate(
+        str(OUT), pagesize=A4, rightMargin=1.7*cm, leftMargin=1.7*cm,
+        topMargin=1.6*cm, bottomMargin=1.5*cm,
+        title="Informe Avance 2 - Tutor TOGAF",
+        author="Alexander Chacon Fresneda; Sharon Karina Cruz Valencia",
+    )
     story = []
-    story += [Spacer(1, 2.2*cm), Paragraph("TUTOR TOGAF", title), Paragraph("Informe de la segunda entrega", subtitle), Spacer(1, 0.7*cm)]
+    story += [Spacer(1, 2.2*cm), Paragraph("TUTOR TOGAF", title), Paragraph("Informe de la segunda entrega", subtitle), Spacer(1, 0.4*cm), Paragraph("Alexander Chacon Fresneda<br/>Sharon Karina Cruz Valencia", ParagraphStyle("Authors", parent=subtitle, fontSize=12, leading=17, textColor=INK)), Spacer(1, 0.45*cm)]
     story += [Paragraph("Asistente académico con recuperación aumentada por generación para consultar extractos autorizados de TOGAF 9.1.", ParagraphStyle("Lead", parent=body, fontSize=12, leading=17, alignment=TA_CENTER)), Spacer(1, 0.5*cm)]
     details = [["Corpus", "6 extractos TOGAF 9.1"], ["Evaluación", f"Ragas · {n_questions} preguntas, 15 respondibles + 3 fuera del corpus"], ["Aplicación pública", APP_URL], ["Repositorio", REPO_URL]]
     tab = Table([[Paragraph(f"<b>{a}</b>", body), Paragraph(b, body)] for a,b in details], colWidths=[3.4*cm, 13.0*cm])
@@ -195,6 +200,21 @@ def build() -> Path:
     decision_table = Table([[Paragraph(str(v), small if i else ParagraphStyle("TH", parent=small, fontName="TimesNewRoman-Bold", textColor=colors.white)) for v in row] for i,row in enumerate(decisions)], colWidths=[2.5*cm, 5.4*cm, 8.5*cm], repeatRows=1)
     decision_table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),NAVY),("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,LIGHT]),("GRID",(0,0),(-1,-1),0.35,colors.HexColor("#CBD5DF")),("VALIGN",(0,0),(-1,-1),"TOP"),("LEFTPADDING",(0,0),(-1,-1),6),("RIGHTPADDING",(0,0),(-1,-1),6),("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5)]))
     story += [decision_table, Spacer(1, 0.25*cm), Paragraph("La transcripción manual del diagrama ADM de la introducción se agrega durante la ingesta porque sus rótulos no se extraen como texto del PDF. Esto vuelve recuperables las fases y la gestión de requisitos.", small), PageBreak()]
+
+    story += [Paragraph("Guía del proyecto (síntesis del README)", h1),
+        Paragraph("Corpus y alcance", h2),
+        Paragraph("El tutor está orientado a extractos de TOGAF 9.1: introducción al ADM, fase preliminar, fase A (Visión), fase B (Negocio) y fase C (Arquitecturas de Datos y Aplicaciones). El corpus disponible no cubre todo TOGAF ni la fase D de Tecnología. Los PDF proporcionados están marcados como copias de evaluación y no se distribuyen en GitHub; para el uso local se deben copiar a <b>data/source_documents/</b> los documentos que el usuario esté autorizado a procesar.", body),
+        Paragraph("Instalación y ejecución local", h2),
+        Paragraph("Se recomienda Python 3.12. Desde la raíz del repositorio, se crea un entorno virtual, se instalan las dependencias y se configura <b>GROQ_API_KEY</b> en un archivo local <b>.env</b> basado en <b>.env.example</b>. La clave no se publica en el repositorio.", body),
+        Paragraph("<font name='TimesNewRoman'>git clone https://github.com/skallenfreck/TOGAF-Tutor.git<br/>cd TOGAF-Tutor<br/>python -m venv .venv<br/>.\\.venv\\Scripts\\Activate.ps1<br/>python -m pip install -r requirements.txt<br/>Copy-Item .env.example .env<br/>streamlit run app.py</font>", small),
+        Paragraph("En la interfaz se cargan los PDF y se selecciona <b>Crear índice de esta sesión</b>. El índice de la aplicación se conserva en memoria durante esa sesión. Para consultas locales por consola se usa <b>python -m src.main</b>; para crear el índice persistente local se ejecuta <b>python -m scripts.build_index</b>.", body),
+        Paragraph("Evaluación reproducible", h2),
+        Paragraph("El conjunto <b>evaluation/questions.json</b> tiene 18 preguntas: 15 respondibles con los extractos y 3 fuera del corpus. El script <b>python -m scripts.evaluate_ragas</b> compara top_k=3 y top_k=8 y calcula faithfulness, answer_relevancy, context_precision y context_recall, además del control de abstenciones. La ejecución usa Groq para generar y evaluar respuestas, por lo que consume cuota. Los checkpoints quedan localmente en <b>evaluation/results/</b> y se excluyen de Git.", body),
+        Paragraph("Despliegue público", h2),
+        Paragraph("La aplicación se publica desde Streamlit Community Cloud conectando el repositorio <b>skallenfreck/TOGAF-Tutor</b>, la rama <b>main</b> y el archivo de entrada <b>app.py</b>. En los secretos de Streamlit se configura <b>GROQ_API_KEY</b>. Luego se espera a que finalice el despliegue, se abre la URL pública y se cargan los documentos desde la propia interfaz.", body),
+        Paragraph(f"Aplicación: <link href='{APP_URL}' color='#1B6CA8'>{APP_URL}</link><br/>Repositorio: <link href='{REPO_URL}' color='#1B6CA8'>{REPO_URL}</link>", body),
+        Paragraph("Privacidad y estructura", h2),
+        Paragraph("Los embeddings se calculan con FastEmbed en el entorno donde corre la aplicación. En la app pública, los archivos cargados se procesan durante la sesión; la pregunta, el historial reciente y los fragmentos recuperados se envían a Groq para generar la respuesta. Las claves, los documentos fuente, los índices y los resultados detallados de evaluación no deben subirse a GitHub. Los componentes principales son <b>app.py</b> (interfaz), <b>src/rag/documents.py</b> (ingesta y fragmentación), <b>embeddings.py</b> y <b>vector_store.py</b> (vectorización e índice), <b>pipeline.py</b> (recuperación y abstención), <b>generation.py</b> (Groq y salida estructurada), y <b>scripts/</b> (construcción y evaluación).", body), PageBreak()]
 
     story += [Paragraph("Evaluación Ragas y comparación", h1), Paragraph("Se evaluaron 18 preguntas: 15 con respuesta en el corpus y 3 de abstención. Para la iteración se cambió top_k de 3 a 8 y se mantuvieron los demás parámetros. Cada valor es el promedio sobre las mismas preguntas.", body)]
     metric_names = ["faithfulness", "answer_relevancy", "context_precision", "context_recall"]
