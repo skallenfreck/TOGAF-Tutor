@@ -100,7 +100,7 @@ lo respaldan.
 Se recomienda Python 3.12.
 
 ```powershell
-git clone https://github.com/SharonKarina/Tutor-TOGAF.git
+git clone https://github.com/skallenfreck/TOGAF-Tutor.git
 cd Tutor-TOGAF
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
@@ -179,16 +179,16 @@ fragmentos del corpus ni archivos intermedios en un repositorio público.
 1. Confirma que el código esté en `main` del repositorio de GitHub.
 2. Entra a [Streamlit Community Cloud](https://share.streamlit.io/) e inicia sesión con
    GitHub.
-3. Crea una app desde el repositorio `SharonKarina/Tutor-TOGAF`, rama `main` y archivo
+3. Crea una app desde el repositorio `skallenfreck/TOGAF-Tutor`, rama `main` y archivo
    de entrada `app.py`.
 4. Selecciona Python 3.12 y agrega `GROQ_API_KEY` en los secretos de la app; no la
    agregues a un archivo del repositorio.
 5. Despliega, verifica que el arranque termine y carga los PDF desde la interfaz.
 6. Copia la URL que Streamlit asigne y actualiza la sección siguiente.
 
-**URL pública de la app:** pendiente de despliegue en la cuenta de Streamlit.
+**URL pública de la app:** https://togaf-tutor-gvt5yxbedckatvnvha3xei.streamlit.app/
 
-**Repositorio GitHub:** <https://github.com/SharonKarina/Tutor-TOGAF>
+**Repositorio GitHub:** <https://github.com/skallenfreck/TOGAF-Tutor>
 
 ## Archivos principales
 

@@ -184,6 +184,14 @@ class FastEmbedRagasEmbedding(BaseRagasEmbedding):
         super().__init__()
         self.local_embedder = local_embedder
 
+    # Legacy Ragas metrics such as AnswerRelevancy expect the LangChain
+    # Embeddings method names, while BaseRagasEmbedding uses embed_text(s).
+    def embed_query(self, text: str):
+        return self.local_embedder.embed_query(text)
+
+    def embed_documents(self, texts: list[str]):
+        return self.local_embedder.embed_documents(texts)
+
     def embed_text(self, text: str, **kwargs):
         return self.local_embedder.embed_query(text)
 
@@ -255,11 +263,14 @@ def main() -> None:
     from openai import OpenAI
     from ragas import EvaluationDataset, evaluate
     from ragas.llms import llm_factory
-    from ragas.metrics.collections import (
+    # `evaluate()` in Ragas 0.4 expects the legacy Metric interface. The
+    # newer metrics.collections objects are BaseMetric instances and are not
+    # accepted by that evaluator API yet.
+    from ragas.metrics import (
         AnswerRelevancy,
-        ContextPrecisionWithReference,
-        ContextRecall,
         Faithfulness,
+        LLMContextPrecisionWithReference,
+        LLMContextRecall,
     )
 
     client = Groq(api_key=api_key)
@@ -270,13 +281,24 @@ def main() -> None:
         api_key=api_key,
         base_url="https://api.groq.com/openai/v1",
     )
-    evaluator_llm = llm_factory(args.model, provider="openai", client=evaluator_client)
+    evaluator_llm = llm_factory(
+        args.model,
+        provider="openai",
+        client=evaluator_client,
+        # Ragas 0.4's structured-output wrapper defaults to 1,024 tokens.
+        # GPT-OSS can spend that budget on reasoning before returning JSON;
+        # reserve more completion space and use the model's low effort setting.
+        max_tokens=4096,
+        reasoning_effort="low",
+    )
     evaluator_embeddings = FastEmbedRagasEmbedding(embedder)
     metrics = [
         Faithfulness(llm=evaluator_llm),
         AnswerRelevancy(llm=evaluator_llm, embeddings=evaluator_embeddings),
-        ContextPrecisionWithReference(name="context_precision", llm=evaluator_llm),
-        ContextRecall(llm=evaluator_llm),
+        LLMContextPrecisionWithReference(
+            name="context_precision", llm=evaluator_llm
+        ),
+        LLMContextRecall(name="context_recall", llm=evaluator_llm),
     ]
 
     variants = [
