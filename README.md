@@ -190,6 +190,15 @@ fragmentos del corpus ni archivos intermedios en un repositorio público.
 
 **Repositorio GitHub:** <https://github.com/skallenfreck/TOGAF-Tutor>
 
+## Informe de la entrega
+
+El informe PDF con el diagrama RAG, decisiones técnicas, tabla y análisis de Ragas y
+capturas de la aplicación se encuentra en
+[`output/pdf/Informe_Avance2_Tutor_TOGAF.pdf`](output/pdf/Informe_Avance2_Tutor_TOGAF.pdf).
+Después de completar `evaluation/results/completa_18_principal`, se puede regenerar
+con `python -m scripts.build_avance2_report` (requiere `reportlab`, incluido en
+`requirements.txt`).
+
 ## Archivos principales
 
 - `app.py`: interfaz de chat para Streamlit.
@@ -201,5 +210,6 @@ fragmentos del corpus ni archivos intermedios en un repositorio público.
 - `prompts/system_prompt.py`: System Prompt y ejemplos Few-Shot del tutor.
 - `scripts/build_index.py`: construcción local del índice persistente.
 - `scripts/evaluate_ragas.py`: comparación Ragas antes/después.
+- `scripts/build_avance2_report.py`: generación del informe PDF desde los checkpoints Ragas.
 - `evaluation/questions.json`: 18 preguntas y respuestas de referencia.
 - `data/source_documents/README.md`: cómo preparar el corpus privado.
