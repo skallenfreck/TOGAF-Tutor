@@ -22,7 +22,9 @@ data/source_documents/*
 
 # Local vector indexes and evaluation artifacts
 data/chroma/
+data/fastembed_cache/
 evaluation/results/
+logs/*.jsonl
 
 # Streamlit secrets must never be committed
 .streamlit/secrets.toml

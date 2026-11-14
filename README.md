@@ -177,6 +177,72 @@ un cobro si la cuenta tiene el plan Developer. Los resultados y textos intermedi
 guardan localmente bajo `evaluation/results/`, carpeta excluida de Git. No incluyas
 fragmentos del corpus ni archivos intermedios en un repositorio público.
 
+## Avance 3: herramienta de búsqueda del agente
+
+`src/agent/tools.py` contiene las herramientas del agente. `buscar_en_base` envuelve el
+recuperador híbrido del RAG; su docstring explica cuándo usarla. Los límites están en
+código, no dependen del prompt: máximo 5 fragmentos por llamada, 900 caracteres por
+fragmento y 1.000 caracteres por consulta. Cada resultado incluye documento, página o
+sección, similitud y texto para citar. La herramienta no llama a Groq.
+
+`generar_referencia_apa` es la herramienta determinista de tarea del dominio: verifica
+que el PDF pertenezca al corpus, valida la página contra el archivo real y devuelve una
+referencia con metadatos bibliográficos configurados, sin pedir al modelo que los recuerde.
+`buscar_en_web` sigue la política **primero la base**: el agente no recibe su schema
+hasta que haya consultado la base. Después, el LLM evalúa si los fragmentos responden;
+solo puede buscar en la web si falta información pública o actual. El programa pasa exclusivamente la
+pregunta del estudiante; nunca envía fragmentos del corpus ni argumentos textuales del
+modelo. La tool devuelve como máximo 3 resultados con título, URL, extracto de hasta 500
+caracteres y marca `origen: web`.
+
+La lista fija de dominios permitidos está en `ALLOWED_WEB_DOMAINS` dentro de
+`src/agent/tools.py`: `opengroup.org`, `iso.org`, `nist.gov`, `gov.co` y `europa.eu`.
+Se priorizan el organismo de TOGAF, organizaciones de estándares y sitios oficiales
+gubernamentales o de la Unión Europea. La herramienta agrega los filtros de dominio a
+la consulta y descarta en código cualquier URL que no pertenezca a esa lista; el LLM no
+puede modificarla. Si no hay resultados permitidos, el agente mantiene su abstención.
+La búsqueda consulta Bing y valida cada URL contra la lista fija anterior; solo devuelve
+coincidencias permitidas. Requiere conexión a Internet.
+
+La interfaz conversacional usa este agente y conserva los turnos en el historial de la
+sesión para resolver preguntas de seguimiento. Debajo de cada respuesta se puede abrir
+**Herramientas usadas** para ver el nombre de cada tool, sus argumentos y el número de
+llamadas al LLM. Las evidencias aparecen en secciones independientes: **Fuentes de la
+base de conocimiento** (documento, página/sección y fragmento) y **Fuentes web**
+(título, URL y extracto). Si ni el corpus ni la búsqueda web permitida aportan evidencia,
+el agente muestra la abstención definida para el tutor en lugar de responder de memoria.
+La interfaz nunca muestra ni solicita claves; localmente lee `GROQ_API_KEY` del entorno
+o `.env`, y en Streamlit Community Cloud de los secretos de la app. La búsqueda web
+actual usa Bing y no requiere una clave adicional.
+
+`src/agent/runner.py` implementa el bucle de llamadas a herramientas con un máximo de
+4 iteraciones y hasta 3 llamadas paralelas por iteración. El agente puede buscar más de
+una vez para descomponer preguntas con varios temas. Saludos y conversación casual no
+requieren búsqueda; una pregunta factual de TOGAF sin resultados de herramienta recibe
+la abstención exacta definida en `src/rag/pipeline.py`. La respuesta final conserva el
+formato estructurado y añade citas en `fuentes`. El prompt del agente está en
+`prompts/system_prompt.py`; el prompt anterior se conserva aparte para reproducir la
+evaluación Ragas del Avance 2.
+
+Cada interacción escribe en `logs/tool_usage.jsonl` la pregunta, herramientas usadas,
+argumentos, iteraciones y número total de llamadas al LLM. El log se excluye de Git para
+no publicar preguntas de estudiantes. Se puede cambiar la ruta con `TOOL_USAGE_LOG`.
+
+Se puede demostrar directamente, sin usar el LLM ni consumir tokens de Groq:
+
+```powershell
+python -m scripts.smoke_knowledge_tool
+```
+
+El script prepara un índice temporal del corpus y ejecuta `.invoke()` con una pregunta
+de ejemplo. La primera ejecución puede descargar el modelo de embeddings local; el
+resultado impreso muestra los fragmentos y sus fuentes.
+
+Resultado observado sin llamada al LLM: la pregunta «¿Cuál es el objetivo de la fase de
+Visión de Arquitectura?» devolvió 5 fragmentos; el primero fue
+`TOGAF_V9.1-VisionArquitectura.pdf`, página 2, similitud `0.8229`. La respuesta completa
+de `.invoke()` incluye también el texto de cada fragmento y sus metadatos de cita.
+
 ## Despliegue público
 
 1. Confirma que el código esté en `main` del repositorio de GitHub.
@@ -214,6 +280,35 @@ con `python -m scripts.build_avance2_report` (requiere `reportlab`, incluido en
 - `prompts/system_prompt.py`: System Prompt y ejemplos Few-Shot del tutor.
 - `scripts/build_index.py`: construcción local del índice persistente.
 - `scripts/evaluate_ragas.py`: comparación Ragas antes/después.
+- `scripts/evaluate_agent.py`: evaluación comparativa RAG fijo/agente, Ragas, casos de comportamiento y costo.
+- `evaluation/agent_behavior_cases.json`: siete casos y expectativas definidas antes de la ejecución.
+- `evaluation/avance2_baseline_metrics.csv`: métricas del RAG fijo por pregunta para la comparación con el agente.
 - `scripts/build_avance2_report.py`: generación del informe PDF desde los checkpoints Ragas.
 - `evaluation/questions.json`: 18 preguntas y respuestas de referencia.
 - `data/source_documents/README.md`: cómo preparar el corpus privado.
+
+## Avance 3: evaluación del agente
+
+`evaluation/agent_behavior_cases.json` contiene siete casos con el comportamiento
+esperado escrito antes de ejecutarlos: saludo, pregunta compuesta, dos tareas APA,
+consulta pública actual, respuesta disponible en el corpus e instrucción maliciosa.
+`scripts/evaluate_agent.py` ejecuta estos casos y registra tools, argumentos, llamadas
+al LLM, tokens informados por Groq, duración, resultado esperado y cumplimiento.
+
+El mismo script ejecuta las 18 preguntas de `evaluation/questions.json` contra el RAG
+fijo (`top_k=3`) y el agente, calcula las cuatro métricas Ragas para el agente y produce
+`metrics_comparison.csv`, `cost_comparison.csv`, `agent_scores_by_question.csv` y
+`behavior_results.csv` dentro de `evaluation/results/avance3_agent/`. El archivo
+`evaluation/avance2_baseline_metrics.csv` conserva las métricas por pregunta del RAG
+fijo ya evaluado en Avance 2 para formar la comparación pareada sin volver a consumir
+cuota evaluando de nuevo sus métricas.
+
+```powershell
+python -m scripts.evaluate_agent
+```
+
+La medición de costo cuenta llamadas, tokens de entrada/salida reportados por Groq y
+latencia de respuesta para las solicitudes de generación; excluye los tokens de las
+llamadas de evaluación que Ragas realiza como juez. Los resultados intermedios se
+guardan localmente y permiten reanudar una ejecución interrumpida. Para un piloto se
+puede usar `--limit 2`; la entrega formal debe ejecutarse sin `--limit`.

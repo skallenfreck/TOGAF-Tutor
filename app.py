@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import os
 from collections import Counter
 from pathlib import Path
@@ -13,6 +14,8 @@ from src.rag.embeddings import DEFAULT_EMBEDDING_MODEL, get_local_embedder
 from src.rag.generation import DEFAULT_GROQ_MODEL
 from src.rag.pipeline import RAGPipeline
 from src.rag.vector_store import ChromaVectorStore
+from src.agent.runner import run_agent
+from src.agent.tools import GenerarReferenciaApaTool
 
 load_dotenv()
 st.set_page_config(page_title="Tutor TOGAF", page_icon="📚", layout="centered")
@@ -62,28 +65,66 @@ def render_answer(entry: dict) -> None:
         st.markdown(f"**Ejemplo:** {example}")
     if answer.get("nivel"):
         st.caption(f"Nivel: {answer['nivel']}")
+    render_tool_usage(entry)
+    render_sources(entry)
 
+
+def render_tool_usage(entry: dict) -> None:
+    trace = entry.get("tool_trace", [])
+    call_count = int(entry.get("llm_call_count", 0) or 0)
+    with st.expander(f"Herramientas usadas ({len(trace)}) · llamadas al LLM ({call_count})"):
+        if not trace:
+            st.caption("El agente respondió sin llamar herramientas.")
+        else:
+            tool_labels = {
+                "buscar_en_base": "Búsqueda en la base de conocimiento",
+                "buscar_en_web": "Búsqueda web controlada",
+                "generar_referencia_apa": "Generación de referencia APA",
+            }
+            for index, call in enumerate(trace, start=1):
+                name = call.get("name", "herramienta")
+                st.markdown(f"**{index}. {tool_labels.get(name, name)}**")
+                arguments = call.get("arguments", {})
+                st.code(json.dumps(arguments, ensure_ascii=False, indent=2), language="json")
+
+
+def render_sources(entry: dict) -> None:
     sources = entry.get("sources", [])
-    if sources:
-        unique_documents = len({source.get("source", "Documento") for source in sources})
-        with st.expander(
-            f"Evidencia: {len(sources)} fragmentos de {unique_documents} documentos"
-        ):
-            for index, source in enumerate(sources, start=1):
-                location = source.get("source", "Documento")
+    base_sources = [source for source in sources if source.get("origin", "base") == "base"]
+    web_sources = [source for source in sources if source.get("origin") == "web"]
+    if not base_sources and not web_sources:
+        st.caption("No se encontraron fuentes suficientes en la base ni en los sitios web permitidos.")
+        return
+
+    if base_sources:
+        with st.expander(f"Fuentes de la base de conocimiento ({len(base_sources)})"):
+            for index, source in enumerate(base_sources, start=1):
+                document = source.get("source", "Documento")
                 page = source.get("page")
-                if page is not None:
-                    location += f" · página {page}"
-                chunk_index = source.get("chunk_index")
-                if chunk_index is not None:
-                    location += f" · fragmento {int(chunk_index) + 1}"
-                st.markdown(f"**{index}. {location}**")
-                st.caption(f"Similitud: {source.get('similarity', 0):.3f}")
-                st.write(source.get("text", ""))
+                section = source.get("section")
+                location = f"página {page}" if page is not None else str(section or "sección no especificada")
+                st.markdown(f"**{index}. [base: {document}, {location}]**")
+                if source.get("citation"):
+                    st.write(source["citation"])
+                if source.get("similarity") is not None:
+                    st.caption(f"Similitud: {float(source['similarity']):.3f}")
+                if source.get("text"):
+                    st.write(source["text"])
+
+    if web_sources:
+        with st.expander(f"Fuentes web ({len(web_sources)})"):
+            for index, source in enumerate(web_sources, start=1):
+                title = source.get("source", "Resultado web")
+                url = source.get("url", "")
+                st.markdown(f"**{index}. {title}**")
+                if url:
+                    st.markdown(f"[web: {url}]({url})")
+                if source.get("text"):
+                    st.write(source["text"])
 
 
 st.title("Tutor TOGAF")
-st.caption("Asistente académico con recuperación de fragmentos y fuentes visibles.")
+st.caption("Agente académico TOGAF con herramientas, historial conversacional y fuentes visibles.")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -107,12 +148,6 @@ with st.sidebar:
             st.write(f"{filename}: {chunk_count} fragmentos")
 
     st.divider()
-    top_k = st.slider(
-        "Fragmentos máximos por pregunta (top_k)",
-        min_value=1,
-        max_value=8,
-        value=5,
-    )
     if st.button("Limpiar conversación"):
         st.session_state.messages = []
         st.rerun()
@@ -120,6 +155,7 @@ with st.sidebar:
     st.caption(
         "El corpus TOGAF autorizado viene incluido con el tutor y se indexa al iniciar. "
         "Solo la pregunta, el historial reciente y los fragmentos recuperados se envían a Groq. "
+        "Para consultas públicas actuales, la búsqueda web recibe solo la pregunta, nunca los fragmentos. "
         "Consulta la [política de datos de Groq](https://console.groq.com/docs/your-data)."
     )
 
@@ -151,30 +187,27 @@ if question:
     )
     history = st.session_state.messages[:-1]
     client = cached_groq_client(api_key)
+    apa_tool = GenerarReferenciaApaTool(Path(__file__).resolve().parent / "data" / "source_documents")
     try:
         with st.chat_message("assistant"):
-            with st.spinner("Buscando evidencia en los documentos…"):
-                answer, retrieved = pipeline.answer(
+            with st.spinner("Decidiendo qué herramienta usar…"):
+                agent_run = run_agent(
                     question,
                     history,
-                    top_k=top_k,
+                    pipeline,
+                    apa_tool,
                     client=client,
+                    model_name=model_name,
+                    tool_log_path=os.getenv("TOOL_USAGE_LOG", "logs/tool_usage.jsonl"),
                 )
-            source_entries = [
-                {
-                    "source": str(item.metadata.get("source", "Documento")),
-                    "page": item.metadata.get("page"),
-                    "chunk_index": item.metadata.get("chunk_index"),
-                    "similarity": item.similarity,
-                    "text": item.text,
-                }
-                for item in retrieved
-            ]
+            answer = agent_run.answer
             entry = {
                 "role": "assistant",
                 "content": answer.respuesta,
                 "answer": answer.model_dump(),
-                "sources": source_entries,
+                "sources": agent_run.sources,
+                "tool_trace": agent_run.tool_trace,
+                "llm_call_count": agent_run.llm_call_count,
             }
             render_answer(entry)
         st.session_state.messages.append(entry)

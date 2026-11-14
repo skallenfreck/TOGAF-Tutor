@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from prompts.system_prompt import SYSTEM_PROMPT
+from prompts.rag_evaluation_prompt import RAG_EVALUATION_SYSTEM_PROMPT
 from src.rag.vector_store import RetrievedChunk
 
 DEFAULT_GROQ_MODEL = "openai/gpt-oss-20b"
@@ -200,7 +200,7 @@ def generate_answer(
         messages=[
             {
                 "role": "system",
-                "content": SYSTEM_PROMPT,
+                "content": RAG_EVALUATION_SYSTEM_PROMPT,
             },
             {
                 "role": "user",
