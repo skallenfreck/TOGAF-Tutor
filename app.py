@@ -1,17 +1,14 @@
 from __future__ import annotations
 
-import hashlib
-import importlib.util
 import logging
 import os
-import uuid
 from collections import Counter
 from pathlib import Path
 
 import streamlit as st
 from dotenv import load_dotenv
 
-from src.rag.documents import chunk_documents, extract_documents
+from src.rag.documents import chunk_documents, load_directory
 from src.rag.embeddings import DEFAULT_EMBEDDING_MODEL, get_local_embedder
 from src.rag.generation import DEFAULT_GROQ_MODEL
 from src.rag.pipeline import RAGPipeline
@@ -43,18 +40,17 @@ def groq_api_key() -> str:
         return ""
 
 
-def fingerprint_uploads(files: list[tuple[str, bytes]]) -> str | None:
-    if not files:
-        return None
-    file_fingerprints = []
-    for filename, data in files:
-        digest = hashlib.sha256()
-        digest.update(filename.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(data)
-        file_fingerprints.append(digest.hexdigest())
-    combined = "\n".join(sorted(file_fingerprints)).encode("ascii")
-    return hashlib.sha256(combined).hexdigest()
+@st.cache_resource(show_spinner="Preparando el corpus TOGAF incluido…")
+def load_builtin_index(model_name: str):
+    """Build and cache the bundled TOGAF index once per Streamlit process."""
+    corpus_dir = Path(__file__).resolve().parent / "data" / "source_documents"
+    source_documents = load_directory(corpus_dir)
+    chunks = chunk_documents(source_documents)
+    store = ChromaVectorStore(path=None, collection_name="togaf_builtin_corpus")
+    embedder = cached_embedder(model_name)
+    store.replace_index(chunks, embedder)
+    file_counts = Counter(str(chunk.metadata["source"]) for chunk in chunks)
+    return store, len(source_documents), dict(file_counts)
 
 
 def render_answer(entry: dict) -> None:
@@ -91,79 +87,24 @@ st.caption("Asistente académico con recuperación de fragmentos y fuentes visib
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
-if "rag_store" not in st.session_state:
-    st.session_state.rag_store = None
-if "corpus_fingerprint" not in st.session_state:
-    st.session_state.corpus_fingerprint = None
-if "indexed_file_counts" not in st.session_state:
-    st.session_state.indexed_file_counts = {}
+
+embedding_model = os.getenv("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
+try:
+    rag_store, source_page_count, indexed_file_counts = load_builtin_index(embedding_model)
+except Exception as exc:
+    logging.exception("No se pudo preparar el corpus TOGAF incluido")
+    st.error(f"No se pudo cargar la base de conocimiento incluida: {exc}")
+    st.stop()
 
 with st.sidebar:
     st.header("Base de conocimiento")
-    uploads = st.file_uploader(
-        "Carga los documentos que tienes autorización para procesar",
-        type=["pdf", "docx", "txt", "html", "htm"],
-        accept_multiple_files=True,
-        help="Los documentos se procesan en la sesión y no se guardan en el índice local del servidor.",
+    st.success(
+        f"Corpus TOGAF listo: {len(indexed_file_counts)} documentos, "
+        f"{source_page_count} páginas y {rag_store.count()} fragmentos."
     )
-    uploaded_files = [(upload.name, upload.getvalue()) for upload in (uploads or [])]
-    uploaded_fingerprint = fingerprint_uploads(uploaded_files)
-    if any(Path(filename).suffix.lower() == ".pdf" for filename, _ in uploaded_files):
-        if importlib.util.find_spec("fontTools") is None:
-            st.warning(
-                "Falta fontTools. Instálalo con «python -m pip install -r requirements.txt» "
-                "y vuelve a crear el índice para evitar errores al leer algunos PDF."
-            )
-    if st.button("Crear índice de esta sesión", type="primary", disabled=not uploads):
-        try:
-            source_documents = []
-            for filename, data in uploaded_files:
-                source_documents.extend(extract_documents(data, filename))
-            chunks = chunk_documents(source_documents)
-            store = ChromaVectorStore(
-                path=None,
-                collection_name=f"session_{uuid.uuid4().hex[:16]}",
-            )
-            model_name = os.getenv("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
-            embedder = cached_embedder(model_name)
-            with st.spinner("Extrayendo texto y creando el índice local…"):
-                store.replace_index(chunks, embedder)
-            st.session_state.rag_store = store
-            st.session_state.corpus_fingerprint = uploaded_fingerprint
-            st.session_state.indexed_file_counts = dict(
-                Counter(str(chunk.metadata["source"]) for chunk in chunks)
-            )
-            st.session_state.messages = []
-            st.success(f"Índice listo: {len(source_documents)} páginas/documentos y {len(chunks)} fragmentos.")
-        except Exception as exc:
-            logging.exception("No se pudo crear el índice de esta sesión")
-            st.error(f"No se pudo crear el índice: {exc}")
-
-    index_is_current = (
-        st.session_state.rag_store is not None
-        and uploaded_fingerprint == st.session_state.corpus_fingerprint
-    )
-    if st.session_state.rag_store is not None and index_is_current:
-        indexed_files = st.session_state.indexed_file_counts or {
-            filename: 0 for filename, _ in uploaded_files
-        }
-        file_count = len(indexed_files)
-        st.success(
-            f"Índice de esta sesión: {file_count} archivos, "
-            f"{st.session_state.rag_store.count()} fragmentos"
-        )
-        with st.expander("Ver archivos incluidos en el índice"):
-            for filename, chunk_count in sorted(indexed_files.items()):
-                if chunk_count:
-                    st.write(f"{filename}: {chunk_count} fragmentos")
-                else:
-                    st.write(filename)
-            if not st.session_state.indexed_file_counts:
-                st.caption("Pulsa «Crear índice» otra vez para mostrar el total de fragmentos por archivo.")
-    elif st.session_state.rag_store is not None:
-        st.warning("Cambió la lista de documentos. Pulsa «Crear índice de esta sesión» para incluir los archivos nuevos antes de preguntar.")
-    else:
-        st.info("Carga tus documentos de TOGAF y crea el índice para empezar.")
+    with st.expander("Ver documentos incluidos"):
+        for filename, chunk_count in sorted(indexed_file_counts.items()):
+            st.write(f"{filename}: {chunk_count} fragmentos")
 
     st.divider()
     top_k = st.slider(
@@ -177,10 +118,9 @@ with st.sidebar:
         st.rerun()
 
     st.caption(
-        "La aplicación recibe los archivos cargados para procesarlos en la sesión. "
-        "Solo los fragmentos recuperados, la pregunta y el historial reciente se envían a Groq. "
-        "Consulta la [política de datos de Groq](https://console.groq.com/docs/your-data) "
-        "antes de cargar documentos privados."
+        "El corpus TOGAF autorizado viene incluido con el tutor y se indexa al iniciar. "
+        "Solo la pregunta, el historial reciente y los fragmentos recuperados se envían a Groq. "
+        "Consulta la [política de datos de Groq](https://console.groq.com/docs/your-data)."
     )
 
 for message in st.session_state.messages:
@@ -190,12 +130,8 @@ for message in st.session_state.messages:
         else:
             st.write(message["content"])
 
-question = st.chat_input("Pregunta sobre los documentos TOGAF cargados…")
+question = st.chat_input("Pregunta sobre TOGAF…")
 if question:
-    if not index_is_current:
-        st.warning("Primero carga los PDF y crea el índice de esta sesión.")
-        st.stop()
-
     api_key = groq_api_key()
     if not api_key:
         st.error("Falta configurar GROQ_API_KEY en el entorno o en los secretos de Streamlit.")
@@ -206,9 +142,9 @@ if question:
         st.write(question)
 
     model_name = os.getenv("GROQ_MODEL", DEFAULT_GROQ_MODEL)
-    embedder = cached_embedder(os.getenv("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL))
+    embedder = cached_embedder(embedding_model)
     pipeline = RAGPipeline(
-        st.session_state.rag_store,
+        rag_store,
         embedder,
         min_similarity=float(os.getenv("MIN_RETRIEVAL_SIMILARITY", "0.55")),
         model_name=model_name,

@@ -10,9 +10,15 @@ tmp/
 .DS_Store
 Thumbs.db
 
-# Private source material (the supplied TOGAF PDFs are marked not for redistribution)
+# Authorized TOGAF corpus bundled with the tutor
 data/source_documents/*
 !data/source_documents/README.md
+!data/source_documents/TOGAF_V9.1-Introduccion.pdf
+!data/source_documents/TOGAF_V9.1-FasePreliminar.pdf
+!data/source_documents/TOGAF_V9.1-VisionArquitectura.pdf
+!data/source_documents/TOGAF_V9.1-ArquitecturaNegocio.pdf
+!data/source_documents/TOGAF_V9.1-ArquitecturaInformacion.pdf
+!data/source_documents/TOGAF_V9.1-ArquitecturaAplicaciones.pdf
 
 # Local vector indexes and evaluation artifacts
 data/chroma/

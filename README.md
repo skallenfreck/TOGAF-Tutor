@@ -25,16 +25,16 @@ de TOGAF 9.1, por lo que el asistente debe indicar esa limitación cuando corres
 La fase D y otros capítulos no están incluidos. El tutor debe reconocer esa limitación
 y abstenerse cuando los fragmentos recuperados no permitan responder.
 
-Los PDF suministrados incluyen la marca **“Evaluation Copy. Not for redistribution”**.
-Por ese motivo no se guardan en GitHub. Para ejecutar el proyecto, copia tus archivos
-autorizados en `data/source_documents/`; en la app desplegada, cada persona carga sus
-documentos durante su propia sesión.
+Los seis PDF autorizados forman parte del repositorio en `data/source_documents/` y se
+cargan automáticamente como corpus predefinido. El estudiante no tiene que subir los
+documentos ni crear el índice manualmente. Solo se deben mantener aquí documentos cuyo
+uso y distribución estén autorizados.
 
 ## Flujo RAG
 
 ```mermaid
 flowchart LR
-    A[PDF / DOCX / TXT / HTML] --> B[Extracción local]
+    A[Corpus TOGAF incluido en el proyecto] --> B[Extracción al iniciar]
     B --> C[Fragmentos por página\n450 caracteres + 80 de solapamiento]
     C --> D[FastEmbed\nmodelo multilingüe local]
     D --> E[Chroma\níndice vectorial]
@@ -75,9 +75,10 @@ lo respaldan.
 - Los embeddings se generan con FastEmbed/ONNX en el proceso que ejecuta la app: en el
   equipo durante el uso local o en el servidor de Streamlit durante el uso público. La
   primera ejecución descarga el modelo desde Hugging Face; los documentos no se cargan allí.
-- Al usar la app pública, el navegador envía los archivos cargados al servidor de
-  Streamlit para procesarlos en memoria durante la sesión. La aplicación no los guarda
-  en el índice persistente del servidor.
+- El corpus está versionado junto al código porque se cuenta con autorización para
+  incluirlo. Streamlit lee esos PDF desde `data/source_documents/` y prepara el índice
+  en memoria del proceso; el estudiante no carga documentos. La instancia puede volver
+  a construir el índice después de reiniciarse.
 - Solo la pregunta, el historial reciente y los fragmentos recuperados se envían a
   Groq para generar una respuesta. Ragas también envía a Groq las preguntas, respuestas,
   referencias y contextos recuperados para calificarlos.
@@ -93,7 +94,8 @@ lo respaldan.
   contexto de 131,072 tokens y un máximo de 65,536 tokens de salida. Consulta los
   [límites vigentes](https://console.groq.com/docs/rate-limits), [modelos y precios](https://console.groq.com/docs/models)
   y [datos](https://console.groq.com/docs/your-data) antes de ejecutar la evaluación completa.
-- Nunca agregues `.env`, `secrets.toml`, índices locales ni los PDF fuente a Git.
+- Nunca agregues `.env`, `secrets.toml` ni índices locales a Git. El corpus TOGAF que se
+  mantiene en Git es el conjunto autorizado descrito arriba.
 
 ## Instalación local
 
@@ -110,8 +112,9 @@ Copy-Item .env.example .env
 
 Edita `.env` localmente y asigna `GROQ_API_KEY`. No pegues la clave en GitHub ni en el chat.
 
-Copia los seis archivos TOGAF a `data/source_documents/`. Para crear o actualizar el
-índice local persistente:
+Los seis documentos TOGAF autorizados ya están incluidos en `data/source_documents/`.
+La interfaz construye automáticamente el índice en memoria al abrirse. Para crear o
+actualizar el índice local persistente para consultas por consola:
 
 ```powershell
 python -m scripts.build_index
@@ -134,12 +137,12 @@ Inicia Streamlit desde la raíz del repositorio:
 streamlit run app.py
 ```
 
-En el panel lateral, carga los documentos y selecciona **Crear índice de esta sesión**.
-La conversación conserva turnos para resolver preguntas de seguimiento. En cada
-respuesta, abre **Evidencia** para revisar cuántos fragmentos y documentos distintos
-se usaron, además del archivo, página y texto recuperado. Un fragmento no equivale a
-un PDF: varias entradas pueden pertenecer al mismo documento. El índice de la app se
-mantiene en memoria durante la sesión.
+El tutor carga automáticamente el corpus incluido y prepara el índice la primera vez
+que se inicia cada proceso. No hay que subir PDFs ni pulsar un botón de creación. La
+conversación conserva turnos para resolver preguntas de seguimiento. En cada respuesta,
+abre **Evidencia** para revisar cuántos fragmentos y documentos distintos se usaron,
+además del archivo, página y texto recuperado. El índice se comparte como recurso
+lectura entre las sesiones del proceso de Streamlit.
 
 ## Evaluación Ragas
 
@@ -183,7 +186,8 @@ fragmentos del corpus ni archivos intermedios en un repositorio público.
    de entrada `app.py`.
 4. Selecciona Python 3.12 y agrega `GROQ_API_KEY` en los secretos de la app; no la
    agregues a un archivo del repositorio.
-5. Despliega, verifica que el arranque termine y carga los PDF desde la interfaz.
+5. Despliega y espera a que la app lea el corpus incluido y prepare el índice; el primer
+   arranque también descarga el modelo local de embeddings si aún no está en caché.
 6. Copia la URL que Streamlit asigne y actualiza la sección siguiente.
 
 **URL pública de la app:** https://togaf-tutor-gvt5yxbedckatvnvha3xei.streamlit.app/
