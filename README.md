@@ -99,7 +99,8 @@ lo respaldan.
 
 ## Instalación local
 
-Se recomienda Python 3.12.
+Para desarrollo local se recomienda Python 3.13. Python 3.14 puede requerir compilar
+dependencias de Ragas que no tienen wheel disponible en todos los entornos.
 
 ```powershell
 git clone https://github.com/skallenfreck/TOGAF-Tutor.git
@@ -188,12 +189,15 @@ sección, similitud y texto para citar. La herramienta no llama a Groq.
 `generar_referencia_apa` es la herramienta determinista de tarea del dominio: verifica
 que el PDF pertenezca al corpus, valida la página contra el archivo real y devuelve una
 referencia con metadatos bibliográficos configurados, sin pedir al modelo que los recuerde.
-`buscar_en_web` sigue la política **primero la base**: el agente no recibe su schema
-hasta que haya consultado la base. Después, el LLM evalúa si los fragmentos responden;
-solo puede buscar en la web si falta información pública o actual. El programa pasa exclusivamente la
+`buscar_en_web` sigue la política **primero la base**: el programa ofrece la herramienta
+al modelo, pero no la ejecuta hasta haber consultado primero la base. Si el modelo pide
+la web antes, el código ejecuta la búsqueda local y luego continúa con la consulta web.
+Solo se usa si falta información pública o actual. El programa pasa exclusivamente la
 pregunta del estudiante; nunca envía fragmentos del corpus ni argumentos textuales del
 modelo. La tool devuelve como máximo 3 resultados con título, URL, extracto de hasta 500
-caracteres y marca `origen: web`.
+caracteres y marca `origen: web`. Si Bing no entrega resultados, para preguntas de
+versión/actualidad TOGAF intenta consultar directamente el portafolio oficial de The
+Open Group.
 
 La lista fija de dominios permitidos está en `ALLOWED_WEB_DOMAINS` dentro de
 `src/agent/tools.py`: `opengroup.org`, `iso.org`, `nist.gov`, `gov.co` y `europa.eu`.
@@ -250,7 +254,7 @@ de `.invoke()` incluye también el texto de cada fragmento y sus metadatos de ci
    GitHub.
 3. Crea una app desde el repositorio `skallenfreck/TOGAF-Tutor`, rama `main` y archivo
    de entrada `app.py`.
-4. Selecciona Python 3.12 y agrega `GROQ_API_KEY` en los secretos de la app; no la
+4. Selecciona Python 3.13 y agrega `GROQ_API_KEY` en los secretos de la app; no la
    agregues a un archivo del repositorio.
 5. Despliega y espera a que la app lea el corpus incluido y prepare el índice; el primer
    arranque también descarga el modelo local de embeddings si aún no está en caché.
