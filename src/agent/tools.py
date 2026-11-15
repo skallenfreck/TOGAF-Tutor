@@ -224,37 +224,69 @@ class BuscarEnWebTool:
                 "Accept-Language": "en-US,en;q=0.9",
             },
         )
-        with urlopen(request, timeout=8) as response:
-            html = response.read(1_000_000).decode("utf-8", errors="replace")
-        soup = BeautifulSoup(html, "html.parser")
         results = []
-        for row in soup.select("li.b_algo"):
-            anchor = row.select_one("h2 a")
-            snippet_node = row.select_one(".b_caption p")
-            if anchor is None or not anchor.get("href"):
-                continue
-            result_url = str(anchor["href"])
-            parsed = urlparse(result_url)
-            if (parsed.hostname or "").casefold().endswith("bing.com"):
-                encoded_target = parse_qs(parsed.query).get("u", [""])[0]
-                if encoded_target.startswith("a1"):
-                    try:
-                        padding = "=" * (-len(encoded_target[2:]) % 4)
-                        result_url = base64.urlsafe_b64decode(encoded_target[2:] + padding).decode("utf-8", errors="replace")
-                    except (ValueError, UnicodeDecodeError):
+        try:
+            with urlopen(request, timeout=8) as response:
+                html = response.read(1_000_000).decode("utf-8", errors="replace")
+            soup = BeautifulSoup(html, "html.parser")
+            # Bing changes its result markup periodically. Prefer its known result
+            # cards, then inspect all anchors as a resilient fallback.
+            candidates = []
+            for row in soup.select("li.b_algo"):
+                anchor = row.select_one("h2 a")
+                if anchor:
+                    candidates.append((anchor, row.select_one(".b_caption p")))
+            if not candidates:
+                candidates = [(a, a.parent) for a in soup.select("a[href]")]
+            for anchor, snippet_node in candidates:
+                result_url = str(anchor.get("href", ""))
+                parsed = urlparse(result_url)
+                if (parsed.hostname or "").casefold().endswith("bing.com"):
+                    encoded_target = parse_qs(parsed.query).get("u", [""])[0]
+                    if encoded_target.startswith("a1"):
+                        try:
+                            padding = "=" * (-len(encoded_target[2:]) % 4)
+                            result_url = base64.urlsafe_b64decode(encoded_target[2:] + padding).decode("utf-8", errors="replace")
+                        except (ValueError, UnicodeDecodeError):
+                            continue
+                    else:
                         continue
-                else:
+                host = (urlparse(result_url).hostname or "").casefold().removeprefix("www.")
+                if not any(host == domain or host.endswith("." + domain) for domain in ALLOWED_WEB_DOMAINS):
                     continue
-            host = (urlparse(result_url).hostname or "").casefold().removeprefix("www.")
-            if not any(host == domain or host.endswith("." + domain) for domain in ALLOWED_WEB_DOMAINS):
-                continue
-            snippet = snippet_node.get_text(" ", strip=True) if snippet_node else ""
-            results.append({
-                "origen": "web",
-                "titulo": anchor.get_text(" ", strip=True)[:160],
-                "url": result_url,
-                "extracto": snippet[:MAX_WEB_RESULT_CHARS],
-            })
-            if len(results) >= MAX_WEB_RESULTS:
-                break
+                snippet = snippet_node.get_text(" ", strip=True) if snippet_node else ""
+                title = anchor.get_text(" ", strip=True)
+                if not title or not result_url.startswith("http"):
+                    continue
+                results.append({"origen": "web", "titulo": title[:160], "url": result_url,
+                                "extracto": snippet[:MAX_WEB_RESULT_CHARS]})
+                if len(results) >= MAX_WEB_RESULTS:
+                    break
+        except Exception:
+            # Keep the official-site fallback below available when the public
+            # search engine is temporarily blocked or changes its response.
+            results = []
+
+        # For current TOGAF version/portfolio questions, fetch the official
+        # Open Group portfolio page directly if Bing yielded no allowed results.
+        if not results and "togaf" in normalized_query and any(
+            term in normalized_query for term in ("version", "vigente", "reciente", "actual", "latest")
+        ):
+            official_url = "https://www.opengroup.org/certifications/togaf-certification-portfolio"
+            official_request = Request(official_url, headers={"User-Agent": "Mozilla/5.0 (compatible; TutorTOGAF/1.0)",
+                                                              "Accept": "text/html", "Accept-Language": "en-US,en;q=0.9"})
+            try:
+                with urlopen(official_request, timeout=8) as response:
+                    official_html = response.read(1_000_000).decode("utf-8", errors="replace")
+                official_soup = BeautifulSoup(official_html, "html.parser")
+                for node in official_soup(["script", "style", "nav", "footer"]):
+                    node.decompose()
+                excerpt = " ".join(official_soup.stripped_strings)
+                if excerpt:
+                    results.append({"origen": "web", "titulo": "TOGAF Certification Portfolio | The Open Group",
+                                    "url": official_url, "extracto": excerpt[:MAX_WEB_RESULT_CHARS]})
+            except Exception:
+                # Network unavailability is represented as zero sources so the
+                # caller can abstain cleanly instead of showing an exception.
+                pass
         return {"consulta_publica": query, "cantidad": len(results), "resultados": results}
