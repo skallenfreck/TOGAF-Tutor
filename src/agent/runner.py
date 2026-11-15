@@ -204,8 +204,13 @@ def run_agent(
     request_options = {"reasoning_effort": "low"} if model_name.startswith("openai/gpt-oss-") else {}
 
     for _ in range(MAX_TOOL_ITERATIONS):
+        # Declare every tool on each tool-calling request. Some Groq models may
+        # emit a call to a tool mentioned in the prompt even when its schema was
+        # omitted, which makes the provider reject the entire response (HTTP 400).
+        # The execution guard below still enforces «primero la base»: web calls
+        # are rejected until a knowledge-base lookup has completed.
         tool_options = (
-            {} if casual else {"tools": _tool_schemas(include_web=web_enabled), "tool_choice": "auto"}
+            {} if casual else {"tools": _tool_schemas(include_web=True), "tool_choice": "auto"}
         )
         response = client.chat.completions.create(
             model=model_name,
