@@ -253,13 +253,24 @@ def run_agent(
                         tool_result = apa_tool.invoke(arguments)
                         sources.extend(_collect_sources(name, tool_result))
                     elif name == web_tool.name:
+                        base_result = None
                         if not web_enabled:
-                            raise ValueError("La búsqueda web solo se habilita si la base no devuelve resultados.")
+                            # Some Groq models select the web tool before performing
+                            # the required first KB lookup. Enforce the policy in code
+                            # by running the local search now, then continue with web.
+                            base_arguments = {"consulta": question.strip()[:1000]}
+                            base_result = search_tool.invoke_with_history(base_arguments, message_history)
+                            sources.extend(_collect_sources(search_tool.name, base_result))
+                            trace.append({"name": search_tool.name, "arguments": base_arguments})
+                            web_enabled = True
                         # Only the student's public question reaches the web tool;
                         # model-supplied arguments and retrieved corpus text are not forwarded.
                         arguments = {"consulta_publica": question.strip()[:300]}
-                        tool_result = web_tool.invoke(arguments)
-                        sources.extend(_collect_sources(name, tool_result))
+                        web_result = web_tool.invoke(arguments)
+                        sources.extend(_collect_sources(name, web_result))
+                        tool_result = {"busqueda_web": web_result}
+                        if base_result is not None:
+                            tool_result["base_consultada_primero"] = base_result
                     else:
                         tool_result = {"error": f"Herramienta no permitida: {name}"}
                 except Exception as exc:
